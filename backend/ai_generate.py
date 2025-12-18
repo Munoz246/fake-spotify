@@ -1,42 +1,56 @@
 import json
-import random
+import os
+import re
+from pathlib import Path
 from typing import Any, Dict
+import random
+from dotenv import load_dotenv
+import google.generativeai as genai
+from google.api_core.exceptions import ResourceExhausted, NotFound
 
-from openai import OpenAI
 
-client = OpenAI()
+# Force-load backend/.env
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
 
-def _fallback_pack(prompt: str) -> Dict[str, Any]:
-    # If the AI call fails, we still return something usable.
-    return {
-        "artist": {
-            "name": f"{random.choice(['Neon','Velvet','Solar','Echo'])} {random.choice(['Runners','Bloom','District','Static'])}",
-            "bio": f"Generated from prompt: {prompt}. A fictional artist for the Fake Spotify project.",
-            "genres": "electronic, indie"
-        },
-        "album": {
-            "title": random.choice(["Soft Machines", "Midnight Sketches", "Glass Signals"]),
-            "year": 2024
-        },
-        "tracks": [
-            {"title": "First Light", "duration_sec": 198},
-            {"title": "Side Street", "duration_sec": 212},
-            {"title": "After Hours", "duration_sec": 187},
-            {"title": "Satellite Heart", "duration_sec": 205},
-            {"title": "Blue Noise", "duration_sec": 193},
-        ],
-    }
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise RuntimeError("GEMINI_API_KEY not found.")
 
-def generate_artist_pack(prompt: str) -> Dict[str, Any]:
-    system = (
-        "You generate fictional music catalog data for a school project. "
-        "Return ONLY valid JSON that matches the schema exactly. No markdown."
-    )
+genai.configure(api_key=GEMINI_API_KEY)
 
-    user = f"""
+
+def _extract_json(text: str) -> Dict[str, Any]:
+    """
+    Gemini sometimes returns JSON wrapped in ```json fences.
+    This tries hard to extract the JSON object.
+    """
+    text = text.strip()
+
+    # Remove ```json ... ``` fences if present
+    fence_match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        text = fence_match.group(1).strip()
+
+    # If still not pure JSON, attempt to find first {...} block
+    if not text.startswith("{"):
+        brace_match = re.search(r"(\{.*\})", text, re.DOTALL)
+        if brace_match:
+            text = brace_match.group(1).strip()
+
+    return json.loads(text)
+
+
+def generate_artist_pack(prompt: str):
+    try:
+        model = genai.GenerativeModel("models/gemini-1.5-flash-latest")
+
+        instructions = f"""
+Return ONLY valid JSON (no markdown, no commentary).
+
 Create ONE fictional music artist pack from this prompt: "{prompt}"
 
-Return JSON with this schema:
+Schema:
 {{
   "artist": {{
     "name": "string",
@@ -45,37 +59,47 @@ Return JSON with this schema:
   }},
   "album": {{
     "title": "string",
-    "year": integer (between 1990 and 2025)
+    "year": integer (1990-2025)
   }},
   "tracks": [
-    {{ "title": "string", "duration_sec": integer (120-260) }},
-    ... exactly 6 tracks total
+    {{ "title": "string", "duration_sec": integer (120-260) }}
   ]
 }}
 
 Rules:
-- Make names unique-ish and believable.
-- No real artists.
-- No profanity.
-- JSON only.
+- Exactly 6 tracks
+- No real artists
+- JSON only
 """.strip()
 
-    try:
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=0.9,
+        resp = model.generate_content(
+            instructions,
+            generation_config={"temperature": 0.9},
         )
-        content = resp.choices[0].message.content.strip()
 
-        data = json.loads(content)  # will throw if not valid JSON
+        data = _extract_json(resp.text)
 
-        # light validation
-        assert "artist" in data and "album" in data and "tracks" in data
-        assert isinstance(data["tracks"], list) and len(data["tracks"]) == 6
+        if "tracks" not in data or not isinstance(data["tracks"], list) or len(data["tracks"]) != 6:
+            raise ValueError("Bad model output")
+
         return data
-    except Exception:
-        return _fallback_pack(prompt)
+
+    except (ResourceExhausted, NotFound, ValueError):
+        return fallback_pack(prompt)
+
+def fallback_pack(prompt: str):
+    vibes = ["dreamy", "gritty", "uplifting", "moody", "glitchy", "sunlit"]
+    genres = ["indie pop", "synthwave", "lo-fi", "hip-hop", "house", "alt rock"]
+    artist = f"{random.choice(['Neon','Solar','Velvet','Echo','Paper','Midnight'])} {random.choice(['Bloom','Runners','Static','Avenue','Garden','District'])}"
+    album = f"{random.choice(vibes).title()} {random.choice(['Signals','Sketches','Rooms','Stories','Lines','Days'])}"
+    tracks = [
+        {"title": f"{random.choice(['First','After','Side','Glass','Late','Blue'])} {random.choice(['Light','Hours','Street','Noise','Dream','Reply'])}",
+         "duration_sec": random.randint(120, 260)}
+        for _ in range(6)
+    ]
+    return {
+        "artist": {"name": artist, "bio": f"Generated from prompt: {prompt}.", "genres": f"{random.choice(genres)}, {random.choice(genres)}"},
+        "album": {"title": album, "year": random.randint(1990, 2025)},
+        "tracks": tracks
+    }
+
