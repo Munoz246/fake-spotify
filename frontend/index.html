@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fake Spotify</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Fake Spotify</h1>
+
+      <div class="topbar">
+        <input id="search" placeholder="Search artists..." />
+        <input id="prompt" placeholder="AI prompt (e.g. dreamy synth-pop duo)" />
+        <button id="generateBtn">Generate</button>
+      </div>
+    </header>
+
+    <main class="grid">
+      <section>
+        <h2>Artists</h2>
+        <ul id="artists" class="list"></ul>
+      </section>
+
+      <section>
+        <h2>Albums</h2>
+        <div id="albums" class="cards"></div>
+      </section>
+
+      <section>
+        <h2>Tracks</h2>
+        <ul id="tracks" class="list"></ul>
+      </section>
+    </main>
+
+    <footer id="player">
+      <div id="nowPlaying">Nothing playing</div>
+      <audio id="audio" controls></audio>
+    </footer>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
