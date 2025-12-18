@@ -3,6 +3,8 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from ai_generate import generate_artist_pack
+
 
 from db import init_db, get_conn
 
@@ -72,3 +74,53 @@ def serve_index():
     return FileResponse(FRONTEND_DIR / "index.html")
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+from pydantic import BaseModel
+
+class GenerateRequest(BaseModel):
+    prompt: str
+
+@app.post("/api/generate")
+def generate(req: GenerateRequest):
+    pack = generate_artist_pack(req.prompt)
+
+    # reuse existing assets (simple): cover1/2 + preview1/2/3
+    cover = "covers/cover1.jpg"
+    audio_choices = ["audio/preview1.mp3", "audio/preview2.mp3", "audio/preview3.mp3"]
+
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO artists (name, bio, genres, image_path) VALUES (?, ?, ?, ?)",
+            (
+                pack["artist"]["name"],
+                pack["artist"]["bio"],
+                pack["artist"]["genres"],
+                None,
+            ),
+        )
+        artist_id = cur.lastrowid
+
+        cur = conn.execute(
+            "INSERT INTO albums (artist_id, title, year, cover_path) VALUES (?, ?, ?, ?)",
+            (
+                artist_id,
+                pack["album"]["title"],
+                int(pack["album"]["year"]),
+                cover,
+            ),
+        )
+        album_id = cur.lastrowid
+
+        for i, t in enumerate(pack["tracks"]):
+            conn.execute(
+                "INSERT INTO tracks (album_id, title, duration_sec, audio_path, popularity) VALUES (?, ?, ?, ?, ?)",
+                (
+                    album_id,
+                    t["title"],
+                    int(t["duration_sec"]),
+                    audio_choices[i % len(audio_choices)],
+                    50,
+                ),
+            )
+
+    return {"artist_id": artist_id, "album_id": album_id, "pack": pack}
